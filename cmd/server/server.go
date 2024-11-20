@@ -4,6 +4,9 @@ import (
 	"GoNews/pkg/api"
 	"GoNews/pkg/storage"
 	"GoNews/pkg/storage/memdb"
+	"GoNews/pkg/storage/mongo"
+	"GoNews/pkg/storage/postgres"
+	"log"
 	"net/http"
 )
 
@@ -21,19 +24,15 @@ func main() {
 	//
 	// БД в памяти.
 	db := memdb.New()
-    /*
+
 	// Реляционная БД PostgreSQL.
-	db2, err := postgres.New("postgres://postgres:postgres@server.domain/posts")
-	if err != nil {
-		log.Fatal(err)
-	}
+	db2 := postgres.New("postgres://postgres:postgres@server.domain/posts")
 	// Документная БД MongoDB.
-	db3, err := mongo.New("mongodb://server.domain:27017/")
+	db3, err := mongo.New("mongo://server.domain:27017/")
 	if err != nil {
 		log.Fatal(err)
 	}
 	_, _ = db2, db3
-	*/
 
 	// Инициализируем хранилище сервера конкретной БД.
 	srv.db = db
