@@ -29,21 +29,26 @@ func New(constr string) (*Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := Storage{
+	defer func() {
+		if err != nil {
+			client.Disconnect(context.Background())
+		}
+	}()
+	s := &Storage{
 		db: client,
 	}
-	return &s, nil
+	return s, nil
 }
 
 func (s *Storage) Posts() ([]storage.Post, error) {
 	var posts []storage.Post
 	f := bson.D{}
 	postsCol, err := s.db.Database("go-news").Collection("posts").Find(context.Background(), f)
-	defer postsCol.Close(context.Background())
-
 	if err != nil {
 		return nil, err
 	}
+	defer postsCol.Close(context.Background())
+
 	for postsCol.Next(context.Background()) {
 		var post storage.Post
 		err = postsCol.Decode(&post)
@@ -52,23 +57,28 @@ func (s *Storage) Posts() ([]storage.Post, error) {
 		}
 		f := bson.M{"id": post.AuthorID}
 		author := s.db.Database("go-news").Collection("authors").FindOne(context.Background(), f)
+		if author.Err() != nil {
+			return nil, author.Err()
+		}
 		authors := &Authors{}
-		author.Decode(authors)
+		err = author.Decode(authors)
+		if err != nil {
+			return nil, err
+		}
 		post.AuthorName = authors.Name
 		posts = append(posts, post)
-
 	}
-	if postsCol.Err() != nil {
-		log.Println("Posts getting error:", postsCol.Err().Error())
+	if err := postsCol.Err(); err != nil {
+		log.Println("Posts getting error:", err.Error())
+		return nil, err
 	}
-	return posts, postsCol.Err()
-
+	return posts, nil
 }
 
 func (s *Storage) AddPost(post storage.Post) error {
 	post.CreatedAt = time.Now().Unix()
-	if !checkAuthorID(post.AuthorID, s.db) {
-		return fmt.Errorf("post adding error, author not found: %v", post.AuthorID)
+	if err := checkAuthorID(post.AuthorID, s.db); err != nil {
+		return fmt.Errorf("post adding error, author not found: %v", err)
 	}
 	id := getNextSequence(s.db, "posts")
 	post.ID = id
@@ -80,9 +90,9 @@ func (s *Storage) AddPost(post storage.Post) error {
 }
 
 func (s *Storage) UpdatePost(post storage.Post) error {
-	if !checkAuthorID(post.AuthorID, s.db) {
-		log.Println("Ошибка обновления поста, автора с таким id не существует:", post.AuthorID)
-		return nil
+	if err := checkAuthorID(post.AuthorID, s.db); err != nil {
+		log.Println("Ошибка обновления поста, автора с таким id не существует:", err)
+		return err
 	}
 
 	filter := bson.M{"id": post.ID}
@@ -118,19 +128,31 @@ func getNextSequence(client *mongo.Client, name string) int {
 	}
 
 	updateResult := postsCol.FindOneAndUpdate(context.Background(), f, u, &opts)
+	if updateResult.Err() != nil {
+		log.Println("Error getting sequence:", updateResult.Err())
+		return 0
+	}
+
 	count := &Counter{}
-	updateResult.Decode(count)
+	err := updateResult.Decode(count)
+	if err != nil {
+		log.Println("Error decoding sequence:", err)
+		return 0
+	}
 
 	return count.Seq
 }
 
-func checkAuthorID(id int, client *mongo.Client) bool {
+func checkAuthorID(id int, client *mongo.Client) error {
 	filterAuthorID := bson.M{"id": id}
 	cur := client.Database("go-news").Collection("authors").FindOne(context.Background(), filterAuthorID)
 	if cur.Err() != nil {
-		return false
+		return fmt.Errorf("author not found: %v", cur.Err())
 	}
 	authors := &Authors{}
-	cur.Decode(authors)
-	return true
+	err := cur.Decode(authors)
+	if err != nil {
+		return fmt.Errorf("error decoding author: %v", err)
+	}
+	return nil
 }
